@@ -27,7 +27,7 @@ export async function POST(
     } = await request.json();
 
     // Get the Gemini model
-    const model = genAI.getGenerativeModel({ model: "gemini-pro" });
+    const model = genAI.getGenerativeModel({ model: "gemini-2.0-flash" });
 
     // Create the prompt based on the design patterns
     const prompt = generateReplyPrompt({

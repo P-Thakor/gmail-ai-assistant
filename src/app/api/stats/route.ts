@@ -53,9 +53,40 @@ export async function GET(request: NextRequest) {
     }
 
     return NextResponse.json(stats)
-
   } catch (error) {
     console.error('Stats API Error:', error)
+    
+    // Handle specific authentication errors
+    if (error && typeof error === 'object') {
+      const errorObj = error as any;
+      
+      // Handle invalid_grant error (expired/revoked refresh token)
+      const isInvalidGrant = 
+        errorObj.message === 'invalid_grant' || 
+        errorObj.error === 'invalid_grant' ||
+        errorObj.response?.error === 'invalid_grant' ||
+        errorObj.response?.data?.error === 'invalid_grant' ||
+        (errorObj.message && errorObj.message.includes('invalid_grant')) ||
+        (errorObj.response?.data?.error_description && 
+         errorObj.response.data.error_description.includes('expired or revoked'));
+      
+      if (isInvalidGrant) {
+        console.log('Detected invalid_grant error in stats API, returning AUTH_EXPIRED');
+        return NextResponse.json({ 
+          error: 'Authentication expired. Please sign in again.',
+          code: 'AUTH_EXPIRED'
+        }, { status: 401 })
+      }
+      
+      // Handle other auth errors
+      if (errorObj.code === 401 || errorObj.code === 403 || errorObj.status === 401 || errorObj.status === 403) {
+        return NextResponse.json({ 
+          error: 'Authentication failed. Please re-authenticate.',
+          code: 'AUTH_FAILED'
+        }, { status: 401 })
+      }
+    }
+    
     return NextResponse.json({ 
       error: 'Failed to fetch stats',
       details: error instanceof Error ? error.message : 'Unknown error'

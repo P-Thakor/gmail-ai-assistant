@@ -180,61 +180,90 @@ export default function EmailDetailPage({ emailId }: EmailDetailPageProps) {
     return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i]
   }
 
-
-  const getAvatarFromEmail = (fromEmail: string) => {
-    if (!fromEmail) return 'UN'
+  const getAvatarFromEmail = (fromEmail: string | { name: string, email: string }) => {
+    // Handle both old string format and new object format
+    let emailString: string;
+    let nameString: string | null = null;
     
-    const nameEmailMatch = fromEmail.match(/^(.*?)\s*<(.+)>$/)
-    if (nameEmailMatch) {
-      const name = nameEmailMatch[1]?.trim()
-      if (name && name.length > 0) {
-        const nameParts = name.split(' ').filter(part => part.length > 0)
-        if (nameParts.length >= 2) {
-          return (nameParts[0][0] + nameParts[1][0]).toUpperCase()
+    if (typeof fromEmail === 'object' && fromEmail !== null) {
+      // New object format
+      emailString = fromEmail.email;
+      nameString = fromEmail.name;
+    } else if (typeof fromEmail === 'string') {
+      // Old string format - parse it
+      const nameEmailMatch = fromEmail.match(/^(.*?)\s*<(.+)>$/);
+      if (nameEmailMatch) {
+        nameString = nameEmailMatch[1]?.trim();
+        emailString = nameEmailMatch[2];
+      } else {
+        emailString = fromEmail;
+      }
+    } else {
+      return 'UN';
+    }
+    
+    if (!emailString) return 'UN';
+    
+    // If we have a name, use it for initials
+    if (nameString && nameString.length > 0) {
+      const nameParts = nameString.split(' ').filter(part => part.length > 0);
+      if (nameParts.length >= 2) {
+        return (nameParts[0][0] + nameParts[1][0]).toUpperCase();
+      }
+      return nameString.substring(0, 2).toUpperCase();
+    }
+    
+    // Fall back to email
+    if (emailString.includes('@')) {
+      const emailPart = emailString.split('@')[0];
+      return emailPart.substring(0, 2).toUpperCase();
+    }
+      return emailString.substring(0, 2).toUpperCase() || 'UN';
+  }
+
+  const getSenderName = (fromEmail: string | { name: string, email: string }) => {
+    // Handle both old string format and new object format
+    if (typeof fromEmail === 'object' && fromEmail !== null) {
+      // New object format
+      if (fromEmail.name && fromEmail.name.length > 0) {
+        return fromEmail.name;
+      }
+      return fromEmail.email ? fromEmail.email.split('@')[0] : 'Unknown';
+    } else if (typeof fromEmail === 'string') {
+      // Old string format - parse it
+      const nameEmailMatch = fromEmail.match(/^(.*?)\s*<(.+)>$/);
+      if (nameEmailMatch) {
+        const name = nameEmailMatch[1]?.trim();
+        if (name && name.length > 0) {
+          return name;
         }
-        return name.substring(0, 2).toUpperCase()
+        const email = nameEmailMatch[2];
+        return email.split('@')[0];
       }
-      const email = nameEmailMatch[2]
-      return email.substring(0, 2).toUpperCase()
-    }
-    
-    if (fromEmail.includes('@')) {
-      const emailPart = fromEmail.split('@')[0]
-      return emailPart.substring(0, 2).toUpperCase()
-    }
-    
-    return fromEmail.substring(0, 2).toUpperCase() || 'UN'
-  }
-
-  const getSenderName = (fromEmail: string) => {
-    if (!fromEmail) return 'Unknown'
-    
-    const nameEmailMatch = fromEmail.match(/^(.*?)\s*<(.+)>$/)
-    if (nameEmailMatch) {
-      const name = nameEmailMatch[1]?.trim()
-      if (name && name.length > 0) {
-        return name
+      
+      if (fromEmail.includes('@')) {
+        return fromEmail.split('@')[0];
       }
-      const email = nameEmailMatch[2]
-      return email.split('@')[0]
+      
+      return fromEmail || 'Unknown';
     }
     
-    if (fromEmail.includes('@')) {
-      return fromEmail.split('@')[0]
-    }
-    
-    return fromEmail || 'Unknown'
+    return 'Unknown';
   }
-
-  const getSenderEmail = (fromEmail: string) => {
-    const nameEmailMatch = fromEmail.match(/^(.*?)\s*<(.+)>$/)
-    if (nameEmailMatch) {
-      return nameEmailMatch[2]
+  const getSenderEmail = (fromEmail: string | { name: string, email: string }) => {
+    // Handle both old string format and new object format
+    if (typeof fromEmail === 'object' && fromEmail !== null) {
+      return fromEmail.email;
+    } else if (typeof fromEmail === 'string') {
+      const nameEmailMatch = fromEmail.match(/^(.*?)\s*<(.+)>$/);
+      if (nameEmailMatch) {
+        return nameEmailMatch[2];
+      }
+      return fromEmail;
     }
-    return fromEmail
+    return '';
   }
-
-  const getAvatarColor = (fromEmail: string) => {
+  const getAvatarColor = (fromEmail: string | { name: string, email: string }) => {
     const colors = [
       'bg-blue-500',
       'bg-purple-500', 
@@ -248,9 +277,20 @@ export default function EmailDetailPage({ emailId }: EmailDetailPageProps) {
     
     if (!fromEmail) return colors[0]
     
+    // Extract string for hashing
+    let hashString: string;
+    if (typeof fromEmail === 'object' && fromEmail !== null) {
+      // Use email for hashing to ensure consistency
+      hashString = fromEmail.email || '';
+    } else if (typeof fromEmail === 'string') {
+      hashString = fromEmail;
+    } else {
+      return colors[0];
+    }
+    
     let hash = 0
-    for (let i = 0; i < fromEmail.length; i++) {
-      const char = fromEmail.charCodeAt(i)
+    for (let i = 0; i < hashString.length; i++) {
+      const char = hashString.charCodeAt(i)
       hash = ((hash << 5) - hash) + char
       hash = hash & hash
     }

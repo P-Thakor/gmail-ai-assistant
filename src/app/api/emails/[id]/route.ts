@@ -17,10 +17,14 @@ export async function GET(
     if (!session?.user?.email) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
     }
+      console.log('Fetching email details for ID:', id);
     
-    console.log('Fetching email details for ID:', id);
-    
-    // Get user's access token from database
+    // Check if session has access token (from NextAuth JWT)
+    if (!session.accessToken) {
+      return NextResponse.json({ error: 'No access token in session' }, { status: 401 })
+    }
+
+    // Get user's account info from database for refresh token
     const account = await prisma.account.findFirst({
       where: {
         user: {
@@ -30,19 +34,20 @@ export async function GET(
       }
     })
 
-    if (!account?.access_token) {
-      return NextResponse.json({ error: 'No Gmail access token found' }, { status: 401 })
+    if (!account?.refresh_token) {
+      return NextResponse.json({ error: 'No Gmail refresh token found' }, { status: 401 })
     }
 
-    // Initialize Gmail API with token refresh capability
+    // Initialize Gmail API with fresh token from session
     const auth = new google.auth.OAuth2(
       process.env.GOOGLE_CLIENT_ID,
       process.env.GOOGLE_CLIENT_SECRET,
       process.env.NEXTAUTH_URL + '/api/auth/callback/google'
     )
     
+    // Use the fresh access token from session, not from database
     auth.setCredentials({
-      access_token: account.access_token,
+      access_token: session.accessToken,
       refresh_token: account.refresh_token
     })
 
@@ -150,14 +155,32 @@ export async function GET(
     const threadInfo = emailDetail.data.threadId ? await gmail.users.threads.get({
       userId: 'me',
       id: emailDetail.data.threadId
-    }) : null
+    }) : null    // Helper function to parse email address from header
+    const parseEmailAddress = (headerValue: string) => {
+      if (!headerValue) return { email: '', name: '' }
+      
+      // Match patterns like "Name <email@domain.com>" or just "email@domain.com"
+      const match = headerValue.match(/^(.*?)\s*<(.+?)>$/)
+      if (match) {
+        return {
+          name: match[1].trim().replace(/^["']|["']$/g, ''), // Remove quotes
+          email: match[2].trim()
+        }
+      } else {
+        // Just an email address without name
+        return {
+          name: '',
+          email: headerValue.trim()
+        }
+      }
+    }
 
     const email = {
       id: emailDetail.data.id!,
       gmailId: emailDetail.data.id!,
       threadId: emailDetail.data.threadId!,
       subject: getHeader('Subject'),
-      from: getHeader('From'),
+      from: parseEmailAddress(getHeader('From')),
       to: getHeader('To'),
       cc: getHeader('Cc'),
       bcc: getHeader('Bcc'),
@@ -178,7 +201,6 @@ export async function GET(
     }
 
     return NextResponse.json(email)
-
   } catch (error) {
     console.error('Gmail API Error:', error)
     
@@ -192,9 +214,35 @@ export async function GET(
       })
     }
     
-    // Handle authentication errors
-    if (error && typeof error === 'object' && 'code' in error && (error.code === 401 || error.code === 403)) {
-      return NextResponse.json({ error: 'Authentication failed. Please re-authenticate.' }, { status: 401 })
+    // Handle specific authentication errors
+    if (error && typeof error === 'object') {
+      const errorObj = error as any;
+      
+      // Handle invalid_grant error (expired/revoked refresh token)
+      const isInvalidGrant = 
+        errorObj.message === 'invalid_grant' || 
+        errorObj.error === 'invalid_grant' ||
+        errorObj.response?.error === 'invalid_grant' ||
+        errorObj.response?.data?.error === 'invalid_grant' ||
+        (errorObj.message && errorObj.message.includes('invalid_grant')) ||
+        (errorObj.response?.data?.error_description && 
+         errorObj.response.data.error_description.includes('expired or revoked'));
+      
+      if (isInvalidGrant) {
+        console.log('Detected invalid_grant error in email detail API, returning AUTH_EXPIRED');
+        return NextResponse.json({ 
+          error: 'Authentication expired. Please sign in again.',
+          code: 'AUTH_EXPIRED'
+        }, { status: 401 })
+      }
+      
+      // Handle other auth errors
+      if (errorObj.code === 401 || errorObj.code === 403 || errorObj.status === 401 || errorObj.status === 403) {
+        return NextResponse.json({ 
+          error: 'Authentication failed. Please re-authenticate.',
+          code: 'AUTH_FAILED'
+        }, { status: 401 })
+      }
     }
 
     return NextResponse.json({ 
@@ -217,10 +265,14 @@ export async function PATCH(
     if (!session?.user?.email) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
     }
+      console.log('Updating email status for ID:', id, 'Updates:', body);
     
-    console.log('Updating email status for ID:', id, 'Updates:', body);
-    
-    // Get user's access token from database
+    // Check if session has access token (from NextAuth JWT)
+    if (!session.accessToken) {
+      return NextResponse.json({ error: 'No access token in session' }, { status: 401 })
+    }
+
+    // Get user's account info from database for refresh token
     const account = await prisma.account.findFirst({
       where: {
         user: {
@@ -230,19 +282,20 @@ export async function PATCH(
       }
     })
 
-    if (!account?.access_token) {
-      return NextResponse.json({ error: 'No Gmail access token found' }, { status: 401 })
+    if (!account?.refresh_token) {
+      return NextResponse.json({ error: 'No Gmail refresh token found' }, { status: 401 })
     }
 
-    // Initialize Gmail API
+    // Initialize Gmail API with fresh token from session
     const auth = new google.auth.OAuth2(
       process.env.GOOGLE_CLIENT_ID,
       process.env.GOOGLE_CLIENT_SECRET,
       process.env.NEXTAUTH_URL + '/api/auth/callback/google'
     )
     
+    // Use the fresh access token from session, not from database
     auth.setCredentials({
-      access_token: account.access_token,
+      access_token: session.accessToken,
       refresh_token: account.refresh_token
     })
 
@@ -295,9 +348,39 @@ export async function PATCH(
     }
 
     return NextResponse.json({ success: true })
-
   } catch (error) {
     console.error('Gmail API Error:', error)
+    
+    // Handle specific authentication errors
+    if (error && typeof error === 'object') {
+      const errorObj = error as any;
+      
+      // Handle invalid_grant error (expired/revoked refresh token)
+      const isInvalidGrant = 
+        errorObj.message === 'invalid_grant' || 
+        errorObj.error === 'invalid_grant' ||
+        errorObj.response?.error === 'invalid_grant' ||
+        errorObj.response?.data?.error === 'invalid_grant' ||
+        (errorObj.message && errorObj.message.includes('invalid_grant')) ||
+        (errorObj.response?.data?.error_description && 
+         errorObj.response.data.error_description.includes('expired or revoked'));
+      
+      if (isInvalidGrant) {
+        console.log('Detected invalid_grant error in email update API, returning AUTH_EXPIRED');
+        return NextResponse.json({ 
+          error: 'Authentication expired. Please sign in again.',
+          code: 'AUTH_EXPIRED'
+        }, { status: 401 })
+      }
+      
+      // Handle other auth errors
+      if (errorObj.code === 401 || errorObj.code === 403 || errorObj.status === 401 || errorObj.status === 403) {
+        return NextResponse.json({ 
+          error: 'Authentication failed. Please re-authenticate.',
+          code: 'AUTH_FAILED'
+        }, { status: 401 })
+      }
+    }
     
     return NextResponse.json({ 
       error: 'Failed to update email',

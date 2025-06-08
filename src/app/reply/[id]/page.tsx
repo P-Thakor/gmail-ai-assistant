@@ -57,13 +57,21 @@ export default function ReplyGenerationPage({
     fetchEmailData();
     generateInitialReply();
   }, [emailId, replyType]);
-
   const fetchEmailData = async () => {
     try {
       const response = await fetch(`/api/emails/${emailId}`);
       if (response.ok) {
         const data = await response.json();
+        console.log('Fetched email data:', {
+          id: data.id,
+          subject: data.subject,
+          from: data.from,
+          fromType: typeof data.from,
+          fromEmail: data.from?.email
+        });
         setEmail(data);
+      } else {
+        console.error('Failed to fetch email:', response.status, response.statusText);
       }
     } catch (error) {
       console.error('Error fetching email:', error);
@@ -104,9 +112,15 @@ export default function ReplyGenerationPage({
       setIsGenerating(false);
     }
   };
-
   const sendReply = async () => {
     if (!generatedReply || !email) return;
+
+    console.log('Sending reply with email data:', {
+      emailFrom: email.from,
+      emailFromType: typeof email.from,
+      emailFromEmail: email.from?.email,
+      toField: email.from?.email || email.from
+    });
 
     setIsSending(true);
     try {
@@ -116,7 +130,7 @@ export default function ReplyGenerationPage({
         body: JSON.stringify({
           subject: generatedReply.subject,
           body: generatedReply.body,
-          to: email.from.email,
+          to: email.from?.email || email.from, // Fallback to string if needed
           threadId: email.threadId
         })
       });

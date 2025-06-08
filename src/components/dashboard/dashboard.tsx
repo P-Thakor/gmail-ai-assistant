@@ -62,10 +62,21 @@ export default function Dashboard() {
   const [syncing, setSyncing] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [selectedEmail, setSelectedEmail] = useState<GmailEmail | null>(null)
-  const [previewModalOpen, setPreviewModalOpen] = useState(false)
-
+  const [previewModalOpen, setPreviewModalOpen] = useState(false)  // Handle refresh token errors by signing out and redirecting to login
+  useEffect(() => {
+    if (session?.error === 'RefreshAccessTokenError') {
+      console.log('Refresh token error detected, signing out user');
+      signOut({ callbackUrl: '/' });
+    }
+  }, [session]);
   const fetchEmails = async (showLoading = true) => {
     try {
+      // Don't make API calls if we don't have a valid session
+      if (!session?.user || session?.error) {
+        console.log('No valid session available, skipping email fetch');
+        return;
+      }
+
       if (showLoading) setLoading(true)
       setSyncing(!showLoading)
       setError(null)
@@ -79,7 +90,21 @@ export default function Dashboard() {
       const response = await fetch(`/api/emails?${queryParams}`)
       
       if (!response.ok) {
-        const errorData = await response.json()
+        let errorData;
+        try {
+          errorData = await response.json()
+        } catch (parseError) {
+          console.error('Failed to parse error response:', parseError);
+          errorData = { error: 'Failed to fetch emails', code: 'UNKNOWN_ERROR' };
+        }
+        
+        // Handle authentication expiration
+        if (response.status === 401 || errorData.code === 'AUTH_EXPIRED') {
+          console.log('Authentication expired (401 or AUTH_EXPIRED), signing out user');
+          signOut({ callbackUrl: '/' });
+          return;
+        }
+        
         throw new Error(errorData.error || 'Failed to fetch emails')
       }
 
@@ -88,7 +113,13 @@ export default function Dashboard() {
       setEmailStats(data.stats)
     } catch (err) {
       console.error('Error fetching emails:', err)
-      setError(err instanceof Error ? err.message : 'Failed to fetch emails')
+      
+      // Check if this is a network error that might indicate auth issues
+      if (err instanceof TypeError && err.message.includes('fetch')) {
+        console.log('Network error detected, possibly due to auth issues');
+        setError('Network error - please check your connection and try signing in again');      } else {
+        setError(err instanceof Error ? err.message : 'Failed to fetch emails')
+      }
     } finally {
       setLoading(false)
       setSyncing(false)
@@ -97,18 +128,46 @@ export default function Dashboard() {
 
   const fetchStats = async () => {
     try {
+      // Don't make API calls if we don't have a valid session
+      if (!session?.user || session?.error) {
+        console.log('No valid session available, skipping stats fetch');
+        return;
+      }
+
       const response = await fetch('/api/stats')
       if (response.ok) {
         const stats = await response.json()
         setAppStats(stats)
+      } else {
+        let errorData;
+        try {
+          errorData = await response.json()
+        } catch (parseError) {
+          console.error('Failed to parse stats error response:', parseError);
+          errorData = { error: 'Failed to fetch stats', code: 'UNKNOWN_ERROR' };
+        }
+        
+        // Handle authentication expiration
+        if (response.status === 401 || errorData.code === 'AUTH_EXPIRED') {
+          console.log('Authentication expired while fetching stats (401 or AUTH_EXPIRED), signing out user');
+          signOut({ callbackUrl: '/' });
+          return;
+        }
+        
+        console.error('Failed to fetch stats:', errorData);
       }
     } catch (err) {
       console.error('Error fetching stats:', err)
+      
+      // Check if this is a network error that might indicate auth issues
+      if (err instanceof TypeError && err.message.includes('fetch')) {
+        console.log('Network error in stats fetch, possibly due to auth issues');      }
     }
   }
 
   useEffect(() => {
-    if (session?.user) {
+    // Only fetch data if we have a valid session without errors
+    if (session?.user && !session?.error) {
       fetchEmails()
       fetchStats()
     }
