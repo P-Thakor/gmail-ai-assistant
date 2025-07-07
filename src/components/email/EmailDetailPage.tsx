@@ -154,7 +154,6 @@ export default function EmailDetailPage({ emailId }: EmailDetailPageProps) {
     
     return address
   }
-
   const getDisplayContent = () => {
     if (!email) return ''
     
@@ -168,6 +167,77 @@ export default function EmailDetailPage({ emailId }: EmailDetailPageProps) {
     
     // Show truncated content (first 500 characters)
     return email.body.length > 500 ? email.body.substring(0, 500) + '...' : email.body
+  }
+  const processHtmlContent = (htmlContent: string) => {
+    console.log('🔍 processHtmlContent called with:', { 
+      htmlContentLength: htmlContent.length, 
+      hasAttachments: !!email?.attachments,
+      attachmentCount: email?.attachments?.length || 0,
+      htmlPreview: htmlContent.substring(0, 200) + '...'
+    })
+    
+    if (!email?.attachments) {
+      console.log('⚠️ No attachments found, returning original HTML')
+      return htmlContent
+    }
+
+    let processedHtml = htmlContent
+
+    // Replace cid: references with attachment download URLs
+    email.attachments.forEach(attachment => {
+      console.log('🔧 Processing attachment:', attachment.filename, attachment.attachmentId)
+      // Look for cid: references that might match this attachment
+      const cidPattern = new RegExp(`cid:${attachment.filename}|cid:${attachment.attachmentId}`, 'gi')
+      const attachmentUrl = `/api/emails/${email.id}/attachments/${attachment.attachmentId}`
+      const beforeReplace = processedHtml
+      processedHtml = processedHtml.replace(cidPattern, attachmentUrl)
+      if (beforeReplace !== processedHtml) {
+        console.log('✅ Replaced CID reference for:', attachment.filename)
+      }
+    })    // Also handle generic cid: patterns and try to match them with available attachments
+    const genericCidPattern = /src=["']cid:([^"']+)["']/gi
+    let cidMatches = Array.from(htmlContent.matchAll(genericCidPattern))
+    console.log('🔍 Found CID patterns:', cidMatches.map(match => match[1]))
+    
+    processedHtml = processedHtml.replace(genericCidPattern, (match, cidValue) => {
+      console.log('🔧 Processing generic CID:', cidValue)
+      // Try to find an attachment that might match this CID
+      const matchingAttachment = email.attachments?.find(att => 
+        att.filename.includes(cidValue) || 
+        att.attachmentId.includes(cidValue) ||
+        cidValue.includes(att.filename.split('.')[0])
+      )
+      
+      if (matchingAttachment) {
+        console.log('✅ Found matching attachment for CID:', cidValue, '→', matchingAttachment.filename)
+        return `src="/api/emails/${email.id}/attachments/${matchingAttachment.attachmentId}"`
+      }
+      
+      console.log('⚠️ No matching attachment found for CID:', cidValue)
+      // If no match found, replace with a placeholder or keep original
+      return `src="data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iMjAwIiBoZWlnaHQ9IjEwMCIgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIj48cmVjdCB3aWR0aD0iMTAwJSIgaGVpZ2h0PSIxMDAlIiBmaWxsPSIjZjNmNGY2Ii8+PHRleHQgeD0iNTAlIiB5PSI1MCUiIGZvbnQtZmFtaWx5PSJBcmlhbCwgc2Fucy1zZXJpZiIgZm9udC1zaXplPSIxMiIgZmlsbD0iIzY2NzNkNCIgdGV4dC1hbmNob3I9Im1pZGRsZSIgZHk9Ii4zZW0iPkltYWdlIG5vdCBhdmFpbGFibGU8L3RleHQ+PC9zdmc+"`
+    })    // Handle external images - add loading and error handling
+    const imgPattern = /<img([^>]+)>/gi
+    let imgMatches = Array.from(htmlContent.matchAll(imgPattern))
+    console.log('🖼️ Found', imgMatches.length, 'image tags')
+    
+    processedHtml = processedHtml.replace(imgPattern, (match, attributes) => {
+      console.log('🔧 Processing image tag:', match.substring(0, 100) + '...')
+      // Add loading="lazy" and error handling for better UX
+      if (!attributes.includes('loading=')) {
+        attributes += ' loading="lazy"'
+      }
+      if (!attributes.includes('onerror=')) {
+        attributes += ' onerror="this.style.display=\'none\'"'
+      }
+      if (!attributes.includes('style=')) {
+        attributes += ' style="max-width: 100%; height: auto;"'
+      }
+      return `<img${attributes}>`
+    })
+
+    console.log('✅ Finished processing HTML. Final length:', processedHtml.length)
+    return processedHtml
   }
 
   const formatFileSize = (bytes: number) => {
@@ -503,14 +573,12 @@ export default function EmailDetailPage({ emailId }: EmailDetailPageProps) {
                       ))}
                     </div>
                   </div>
-                )}
-
-                {/* Email Content */}
+                )}                {/* Email Content */}
                 <div className="prose max-w-none">
                   {showHtmlContent && email.htmlBody ? (
                     <div 
                       className="text-gray-800 leading-relaxed"
-                      dangerouslySetInnerHTML={{ __html: email.htmlBody }}
+                      dangerouslySetInnerHTML={{ __html: processHtmlContent(email.htmlBody) }}
                     />
                   ) : (
                     <div className="text-gray-800 leading-relaxed whitespace-pre-wrap">
